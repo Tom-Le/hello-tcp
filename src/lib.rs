@@ -4,22 +4,21 @@ use std::{
   net::{TcpListener, TcpStream},
 };
 
+use anyhow::anyhow;
+
 fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
-  println!("Connection established!");
-
   let buf_reader = BufReader::new(&mut stream);
-  let http_request: Vec<_> = buf_reader
+  let request_line = buf_reader
     .lines()
-    .map_while(|result| result.ok())
-    .take_while(|line| !line.is_empty())
-    .collect();
+    .next()
+    .ok_or(anyhow!("request empty"))??;
 
-  println!("Request: {http_request:#?}");
-
-  let status_line = "HTTP/1.1 200 OK";
-  let contents = fs::read_to_string("hello.html")?;
+  let (status_line, filename) = match request_line.as_str() {
+    "GET / HTTP/1.1" => ("HTTP/1.1 200 OK", "hello.html"),
+    _ => ("HTTP/1.1 404 NOT FOUND", "404.html"),
+  };
+  let contents = fs::read_to_string(filename)?;
   let length = contents.len();
-
   let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
   stream.write_all(response.as_bytes())?;
 
