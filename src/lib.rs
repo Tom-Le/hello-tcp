@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+use log::warn;
 
 fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
   let buf_reader = BufReader::new(&mut stream);
@@ -33,7 +34,7 @@ pub fn run() -> anyhow::Result<()> {
       .map_err(anyhow::Error::new)
       .and_then(handle_connection);
     if let Err(e) = result {
-      println!("Failed to handle connection: {e}");
+      warn!("Failed to handle connection: {e}");
     }
   }
 
