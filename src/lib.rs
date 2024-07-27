@@ -1,11 +1,16 @@
+mod threading;
+
+use core::time::Duration;
 use std::{
   fs,
   io::{BufRead, BufReader, Write},
   net::{TcpListener, TcpStream},
+  thread,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use log::{info, warn};
+use threading::ThreadPool;
 
 fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
   let buf_reader = BufReader::new(&mut stream);
@@ -17,6 +22,11 @@ fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
 
   let (status_line, filename) = match request_line.as_str() {
     "GET / HTTP/1.1" => ("HTTP/1.1 200 OK", "hello.html"),
+    "GET /error HTTP/1.1" => bail!("oh no"),
+    "GET /sleep HTTP/1.1" => {
+      thread::sleep(Duration::from_secs(5));
+      ("HTTP/1.1 200 OK", "hello.html")
+    }
     _ => ("HTTP/1.1 404 NOT FOUND", "404.html"),
   };
   info!("Response: {status_line}");
@@ -30,14 +40,17 @@ fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
 
 pub fn run() -> anyhow::Result<()> {
   let listener = TcpListener::bind("127.0.0.1:7878")?;
+  let pool = ThreadPool::build(4)?;
 
   for stream in listener.incoming() {
-    let result = stream
-      .map_err(anyhow::Error::new)
-      .and_then(handle_connection);
-    if let Err(e) = result {
-      warn!("Failed to handle connection: {e}");
-    }
+    pool.execute(move || {
+      if let Err(e) = stream
+        .map_err(anyhow::Error::new)
+        .and_then(handle_connection)
+      {
+        warn!("Failed to handle connection: {e}");
+      }
+    });
   }
 
   Ok(())
