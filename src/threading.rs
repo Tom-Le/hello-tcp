@@ -20,24 +20,19 @@ impl Worker {
     Ok(Worker {
       id,
       handle: Some(builder.spawn(move || loop {
-        let job = receiver
-          .lock()
-          .expect("mutex poisoned")
-          .recv()
-          .expect("sender closed");
-        info!("Worker {id} received a new job");
-        job();
+        let message = receiver.lock().expect("mutex poisoned").recv();
+        match message {
+          Ok(job) => {
+            info!("Worker {id} received a new job");
+            job();
+          }
+          Err(_) => {
+            info!("Worker {id} disconnected");
+            break;
+          }
+        }
       })?),
     })
-  }
-}
-
-impl Drop for Worker {
-  fn drop(&mut self) {
-    info!("Shutting down worker {}", self.id);
-    if let Some(handle) = self.handle.take() {
-      handle.join().expect("couldn't join worker thread");
-    }
   }
 }
 
@@ -48,8 +43,8 @@ pub enum ThreadPoolBuildError {
 }
 
 pub struct ThreadPool {
-  sender: mpsc::Sender<Job>,
-  _workers: Vec<Worker>,
+  sender: Option<mpsc::Sender<Job>>,
+  workers: Vec<Worker>,
 }
 
 impl ThreadPool {
@@ -64,8 +59,8 @@ impl ThreadPool {
       workers.push(Worker::new(id, Arc::clone(&receiver))?);
     }
     Ok(ThreadPool {
-      sender,
-      _workers: workers,
+      sender: Some(sender),
+      workers,
     })
   }
 
@@ -73,6 +68,22 @@ impl ThreadPool {
   where
     F: FnOnce() + Send + 'static,
   {
-    self.sender.send(Box::new(f)).expect("no receivers left");
+    let Some(sender) = self.sender.as_ref() else {
+      return;
+    };
+    sender.send(Box::new(f)).expect("no receivers left");
+  }
+}
+
+impl Drop for ThreadPool {
+  fn drop(&mut self) {
+    drop(self.sender.take());
+
+    for worker in &mut self.workers {
+      info!("Shutting down worker {}", worker.id);
+      if let Some(handle) = worker.handle.take() {
+        handle.join().expect("couldn't join worker thread");
+      }
+    }
   }
 }
